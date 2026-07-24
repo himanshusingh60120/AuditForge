@@ -1,0 +1,37 @@
+{
+  "name": "auditforge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Screaming Frog audit verification and reporting engine",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/smoke.test.ts"
+  },
+  "dependencies": {
+    "@vercel/kv": "^2.0.0",
+    "next": "14.2.21",
+    "node-html-parser": "^6.1.13",
+    "papaparse": "^5.4.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sql.js": "^1.11.0",
+    "xlsx": "^0.18.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/papaparse": "^5.3.14",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/sql.js": "^1.4.9",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.2"
+  }
+}

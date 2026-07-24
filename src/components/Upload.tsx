@@ -137,7 +137,7 @@ export default function Upload({
         />
       </div>
       {error && (
-        <p role="alert" className="rounded border border-ember/50 bg-ember/10 px-3 py-2 text-sm text-ember">
+        <p role="alert" className="whitespace-pre-wrap rounded border border-ember/50 bg-ember/10 px-3 py-2 text-sm text-ember">
           {error}
         </p>
       )}

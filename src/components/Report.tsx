@@ -19,6 +19,7 @@ import {
 } from "@/lib/modules";
 import { checkRobots, parseRobotsTxt } from "@/lib/robots";
 import { downloadText, exportAuditJson, exportXlsx } from "@/lib/exports";
+import { buildStandaloneReport } from "@/lib/report-html";
 
 export interface PsiResult {
   url: string;
@@ -39,9 +40,6 @@ interface Props {
   onFixStatus?: (issueId: string, status: FixStatus) => void;
   onReverifyClaimed?: () => void;
   onRunPsi?: () => void;
-  onShare?: () => void;
-  shareUrl?: string;
-  shareError?: string;
 }
 
 const sevColor: Record<Severity, string> = {
@@ -321,15 +319,19 @@ export default function Report(props: Props) {
         <button className="btn" onClick={() => exportAuditJson(audit)}>
           ⬇ Audit JSON
         </button>
-        {!readOnly && props.onShare && (
-          <button className="btn" onClick={props.onShare}>
-            ⤴ Share link
-          </button>
-        )}
-        {props.shareUrl && (
-          <code className="evidence !inline-block !w-auto">{props.shareUrl}</code>
-        )}
-        {props.shareError && <span className="text-xs text-ember">{props.shareError}</span>}
+        <button
+          className="btn border-forge/60 text-forge"
+          onClick={() =>
+            downloadText(
+              `auditforge-report-${audit.meta.auditId}.html`,
+              buildStandaloneReport({ audit, hygiene, sitemapDiff, redirectMap, moduleNotes }),
+              "text/html"
+            )
+          }
+          title="One self-contained file — email it, drop it in Slack, or host it anywhere. No link, no login, no expiry."
+        >
+          ⬇ Shareable report (single HTML file)
+        </button>
       </div>
 
       {moduleNotes.length > 0 && (

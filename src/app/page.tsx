@@ -55,8 +55,6 @@ export default function Home() {
   const [psi, setPsi] = useState<PsiResult[]>([]);
   const [psiError, setPsiError] = useState("");
   const [moduleNotes, setModuleNotes] = useState<string[]>([]);
-  const [shareUrl, setShareUrl] = useState("");
-  const [shareError, setShareError] = useState("");
   const [resumable, setResumable] = useState(false);
   const [gscStatus, setGscStatus] = useState<"unknown" | "unconfigured" | "disconnected" | "connected">("unknown");
   const [gscSites, setGscSites] = useState<string[]>([]);
@@ -237,8 +235,7 @@ export default function Home() {
   const runPipeline = useCallback(
     async (file: File) => {
       setError("");
-      setShareUrl("");
-      setPsi([]);
+        setPsi([]);
       setModuleNotes([]);
       const state = { ...newAudit(), gsc: auditRef.current.gsc, sitemapUrls: auditRef.current.sitemapUrls };
       state.meta.name = file.name;
@@ -607,18 +604,6 @@ export default function Home() {
     }
   }, []);
 
-  const handleShare = useCallback(async () => {
-    setShareError("");
-    try {
-      const res = await fetch("/api/reports", { method: "POST", body: JSON.stringify(auditRef.current) });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Share failed");
-      setShareUrl(`${window.location.origin}/r/${data.slug}`);
-    } catch (e) {
-      setShareError(e instanceof Error ? e.message : "Share failed");
-    }
-  }, []);
-
   const resume = useCallback(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -701,9 +686,6 @@ export default function Home() {
               onFixStatus={handleFixStatus}
               onReverifyClaimed={handleReverifyClaimed}
               onRunPsi={handleRunPsi}
-              onShare={handleShare}
-              shareUrl={shareUrl}
-              shareError={shareError}
             />
           )}
         </div>

@@ -15,7 +15,7 @@
 | Detection engine: 24 rules (4xx/5xx, redirect chains/loops/302s, titles, metas, H1/H2, canonical conflicts, noindex+inlinks, orphans, depth, thin content, slow responses…) | ✅ |
 | **Verification loop**: live fetch, UA, ≤5 redirect hops, 10s timeout, 1 retry, robots.txt respected, 300ms delay, batched + concurrency-capped + resumable (client-driven `/api/verify` batches — no serverless timeout can kill a 10k-URL run) | ✅ |
 | **Link-jump verification**: same-origin links are extracted from the live HTML of every verified page, then (a) cross-checked against the crawl — live pages still linking to known 4xx/5xx URLs become `Live page links to a broken URL` findings — and (b) links *absent from the crawl* are live-checked too (capped at 100/audit); broken ones enter the report as `Broken URL discovered via link jump` | ✅ |
-| GSC enrichment via **Search Console "Pages" CSV export** → traffic-weighted Impact Scores, money leaks | ✅ |
+| **GSC — fully automatic**: one-time "Connect Google Search Console" OAuth, then every audit auto-pulls per-URL clicks/impressions/CTR/position (last 28 days, paginated to 75k URLs) during the Enrich stage. Property auto-matched to the crawl domain, or pick one. Tokens live in an AES-256-GCM-encrypted httpOnly cookie — no database needed. CSV export upload remains as a fallback | ✅ |
 | Module B — Core Web Vitals via PSI API, template-clustered sampling | ✅ |
 | Module C — Sitemap intelligence (index recursion, 3-way diff, lastmod plausibility, size limits) | ✅ |
 | Module D — Internal PageRank, equity leaks, dead-ends, top linking opportunities | ✅ |
@@ -32,7 +32,7 @@
 
 Being straight with you rather than shipping façades:
 
-- **GSC OAuth + URL Inspection API + Module E (cannibalization).** OAuth token storage needs a real user/session model to be safe. v1 gets you ~80% of the value via the GSC Pages CSV upload (30 seconds to export). Cannibalization needs the per-query API dimension, which the CSV lacks. The Google Cloud console setup steps are below so the plumbing is ready.
+- **URL Inspection API + Module E (cannibalization).** GSC OAuth is now fully implemented (see above); these two are the remaining GSC features. Both are now small additions on top of the working OAuth plumbing in `src/lib/gsc-server.ts` — cannibalization needs a second `searchAnalytics/query` call with `dimensions: ["query","page"]`.
 - **Module A (raw vs rendered DOM).** `puppeteer-core + @sparticuz/chromium` works on Vercel but pins you to specific function memory/size budgets; it deserves its own queue-isolated route rather than a bolted-on afterthought.
 - **Module H (simhash near-duplicates), Module K (schema validation), Module L (AEO scoring), Slack digest.** Straightforward extensions on top of the existing verification fetch (the HTML is already in hand at that point in `src/app/api/verify/route.ts`).
 - **Server-side PDF.** The report ships a print stylesheet (`⬇ PDF` button → browser print → Save as PDF), which stakeholders can't tell apart from a generated PDF. Headless-Chrome PDF generation belongs with Module A.
@@ -101,7 +101,7 @@ Copy `.env.example` → `.env.local`:
 | `OPENAI_MODEL` | optional model override | defaults to `gpt-4o-mini` |
 | `PAGESPEED_API_KEY` | Module B | Module skipped with note |
 | `KV_REST_API_URL`, `KV_REST_API_TOKEN` | Shareable report links | Share button explains; JSON export still works |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | v2 GSC OAuth | unused in v1 |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | **automatic GSC connection** | Connect button explains; CSV fallback works |
 | `SLACK_WEBHOOK_URL` | v2 Slack digest | unused in v1 |
 
 ## Local test walkthrough (5 minutes, no keys needed)
@@ -115,7 +115,7 @@ npm run dev       # http://localhost:3000
 1. Open http://localhost:3000.
 2. (Optional but recommended) Under **All Inlinks**, add `fixtures/sample_all_inlinks.csv`.
 3. Drag **`fixtures/sample_internal_all.csv`** onto the drop zone.
-4. Watch the forge line: parse → detect (~40 flags) → **verify** → link jump (URLs found inside live page source get chased and checked too). The fixture uses `example.com`, so most checks resolve or confirm against the real live site; robots/network failures land in **Unverifiable** with reasons — exactly as designed.
+4. Watch the forge line: parse → detect (~40 flags) → **verify** → link jump (URLs found inside live page source get chased and checked too) → enrich (auto-pulls GSC data if connected). The fixture uses `example.com`, so most checks resolve or confirm against the real live site; robots/network failures land in **Unverifiable** with reasons — exactly as designed.
 5. Explore: severity/team tabs, evidence snippets (click any row), Module D equity leaks (the fixture links to a 404 from high-PR pages), Module I robots simulator, Module M redirect exports (`/blog/old-post` chain collapses to `/blog/new-post` in 2 hops).
 6. Export **Audit JSON**, start a **New audit**, re-upload the same CSV *plus* that JSON as "previous audit" → delta report.
 7. Mark an issue **Fixed-Claimed** → "Re-verify claimed fixes" → it's promoted to **Fixed-Verified** only if the live source proves it.
@@ -142,14 +142,19 @@ Or push to GitHub → "Import Project" on vercel.com → framework auto-detected
 
 then create `src/app/api/cron/reverify/route.ts` that loads persisted audits from KV, filters `fixStatus === "Fixed-Claimed"`, and replays them through the same logic as `/api/verify` (all exported and reusable). v1 ships the on-demand button wired to identical code, so the cron route is a ~40-line addition.
 
-## Google Cloud OAuth setup (for the v2 GSC connection — do this once, ahead of time)
+## Google Cloud OAuth setup (10 minutes, one time — enables the automatic GSC connection)
 
 1. [console.cloud.google.com](https://console.cloud.google.com) → New project → **APIs & Services → Library** → enable **Google Search Console API**.
-2. **OAuth consent screen** → External → add scope `https://www.googleapis.com/auth/webmasters.readonly` → add your team as test users.
-3. **Credentials → Create credentials → OAuth client ID** → Web application → Authorized redirect URI: `https://<your-app>.vercel.app/api/gsc/callback` (+ `http://localhost:3000/api/gsc/callback` for dev).
-4. Copy client ID/secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+2. **OAuth consent screen** → External → add scope `https://www.googleapis.com/auth/webmasters.readonly` → add your team's Google accounts as test users (or publish the app).
+3. **Credentials → Create credentials → OAuth client ID** → Web application → **Authorized redirect URIs**: add BOTH
+   - `https://<your-app>.vercel.app/api/gsc/callback`
+   - `http://localhost:3000/api/gsc/callback`
+4. Copy the client ID/secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (Vercel env vars + `.env.local`), redeploy.
+5. In AuditForge, click **Connect Google Search Console** → approve → pick a property (or leave on auto-match). Done — every audit now enriches itself.
 
-Until then: **Search Console → Performance → Export → Download CSV → upload the `Pages` file** in the AuditForge upload screen. That powers Impact Scores, money leaks, and the sitemap/GSC diff today.
+How it works: tokens are AES-256-GCM-encrypted into an httpOnly cookie keyed off your client secret; access tokens auto-refresh server-side; `/api/gsc/query` paginates `searchAnalytics` (28-day window, up to 75k URLs). Disconnect any time from the upload screen.
+
+No OAuth keys yet? **Search Console → Performance → Export → Download CSV → upload the `Pages` file** — same enrichment, manual.
 
 ## Extending the detection engine
 

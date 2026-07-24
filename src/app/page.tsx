@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Upload from "@/components/Upload";
 import Pipeline, { Stage } from "@/components/Pipeline";
 import Report, { PsiResult } from "@/components/Report";
+import LiveFindings, { emptyLiveStats, LiveStats } from "@/components/LiveFindings";
 import { downloadConverterBat } from "@/lib/converter-bat";
 import { InlinkEdge, MAX_INLINK_EDGES, parseAllInlinksCsv, parseCrawlFile, parseGscPagesCsv } from "@/lib/parse";
 import { detectIssues } from "@/lib/detect";
@@ -57,6 +58,7 @@ export default function Home() {
   const [psiError, setPsiError] = useState("");
   const [moduleNotes, setModuleNotes] = useState<string[]>([]);
   const [resumable, setResumable] = useState(false);
+  const [live, setLive] = useState<LiveStats>(emptyLiveStats);
   const [gscStatus, setGscStatus] = useState<"unknown" | "unconfigured" | "disconnected" | "connected">("unknown");
   const [gscSites, setGscSites] = useState<string[]>([]);
   const [gscSite, setGscSite] = useState("");
@@ -163,6 +165,8 @@ export default function Home() {
       const batches: (typeof items)[] = [];
       for (let i = 0; i < items.length; i += VERIFY_BATCH) batches.push(items.slice(i, i + VERIFY_BATCH));
 
+      const issueById = new Map(issues.map((i) => [i.id, i]));
+      setLive({ ...emptyLiveStats(), total: items.length, startedAt: Date.now() });
       const resultMap = new Map<string, VerifyResultItem>();
       const headerFindings: AuditState["headerFindings"] = [];
       const seenHeaderUrls = new Set<string>();
@@ -189,6 +193,26 @@ export default function Home() {
             if (!res.ok || !data.results) throw new Error(data.error ?? `Verify batch failed (${res.status})`);
             for (const r of data.results) {
               resultMap.set(r.issueId, r);
+              const src = issueById.get(r.issueId);
+              if (src) {
+                setLive((prev) => {
+                  const next: LiveStats = {
+                    ...prev,
+                    done: prev.done + 1,
+                    confirmed: prev.confirmed + (r.status === "CONFIRMED" ? 1 : 0),
+                    resolved: prev.resolved + (r.status === "RESOLVED" ? 1 : 0),
+                    unverifiable: prev.unverifiable + (r.status === "UNVERIFIABLE" ? 1 : 0),
+                    bySeverity: { ...prev.bySeverity },
+                    recent: prev.recent,
+                  };
+                  if (r.status === "CONFIRMED") {
+                    next.bySeverity[src.severity] = next.bySeverity[src.severity] + 1;
+                    // newest first, keep the feed light
+                    next.recent = [{ ...src, liveEvidence: r.liveEvidence, verification: r.status }, ...prev.recent].slice(0, 40);
+                  }
+                  return next;
+                });
+              }
               const srcUrl = urlByIssueId.get(r.issueId);
               if (srcUrl && r.internalLinks && !linksBySource.has(srcUrl)) {
                 linksBySource.set(srcUrl, r.internalLinks);
@@ -207,6 +231,7 @@ export default function Home() {
                 verifyError: e instanceof Error ? e.message : "Batch request failed",
               });
             }
+            setLive((prev) => ({ ...prev, done: prev.done + batch.length, unverifiable: prev.unverifiable + batch.length }));
           }
           completed += batch.length;
           setProgress(items.length === 0 ? 1 : completed / items.length);
@@ -699,6 +724,7 @@ export default function Home() {
       {stage !== "upload" && (
         <div className="space-y-8">
           <Pipeline stage={stage} detail={detail} progress={progress} />
+          {stage === "verify" && <LiveFindings stats={live} />}
           {stage === "report" && (
             <Report
               audit={audit}

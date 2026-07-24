@@ -64,6 +64,7 @@ export default function Home() {
   auditRef.current = audit;
   const gscRef = useRef({ status: gscStatus, site: gscSite, sites: gscSites });
   gscRef.current = { status: gscStatus, site: gscSite, sites: gscSites };
+  const inlinkEdgesRef = useRef<InlinkEdge[] | null>(null);
 
   // Resume: nothing lost on refresh.
   useEffect(() => {
@@ -371,6 +372,15 @@ export default function Home() {
         // 5 — modules (each fails independently)
         setStage("modules");
         setDetail("Running power modules…");
+        if (!state.pagerank && inlinkEdgesRef.current) {
+          try {
+            state.inlinksLoaded = true;
+            state.pagerank = computePagerank(inlinkEdgesRef.current, rows);
+            note(`Module D enabled from the inlinks file dropped alongside the crawl (${inlinkEdgesRef.current.length.toLocaleString()} edges).`);
+          } catch (e) {
+            note(`Module D skipped: ${e instanceof Error ? e.message : "failed"}`);
+          }
+        }
         try {
           setHygiene(analyzeUrlHygiene(rows));
         } catch (e) {
@@ -456,6 +466,7 @@ export default function Home() {
       try {
         setDetail("Parsing All Inlinks…");
         const edges = await parseAllInlinksCsv(file, (n) => setDetail(`Parsing All Inlinks · ${n.toLocaleString()} edges`));
+        inlinkEdgesRef.current = edges;
         setAudit((prev) => {
           const next = {
             ...prev,

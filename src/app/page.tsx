@@ -4,7 +4,7 @@ import Upload from "@/components/Upload";
 import Pipeline, { Stage } from "@/components/Pipeline";
 import Report, { PsiResult } from "@/components/Report";
 import { downloadConverterBat } from "@/lib/converter-bat";
-import { MAX_INLINK_EDGES, parseAllInlinksCsv, parseCrawlFile, parseGscPagesCsv } from "@/lib/parse";
+import { InlinkEdge, MAX_INLINK_EDGES, parseAllInlinksCsv, parseCrawlFile, parseGscPagesCsv } from "@/lib/parse";
 import { detectIssues } from "@/lib/detect";
 import {
   computeDelta,

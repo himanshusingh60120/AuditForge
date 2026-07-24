@@ -64,6 +64,8 @@ function normalizeRecord(raw: Record<string, unknown>): CrawlRow | null {
 export interface ParseResult {
   rows: CrawlRow[];
   warnings: string[];
+  /** Link edges recovered from a .dbseospider database, when its layout allows. */
+  edges?: InlinkEdge[];
 }
 
 /** Stream-parse a Screaming Frog CSV export. Never holds the raw file in memory as a string. */
@@ -182,14 +184,41 @@ export async function parseDbSeoSpider(
         if (++i % 2000 === 0) onProgress(i);
       }
       stmt.free();
-      db.close();
       if (rows.length > 0) {
-        return {
-          rows,
-          warnings: [
-            `Read ${rows.length.toLocaleString()} rows from proprietary table "${table}". Field coverage may be partial — the CSV/XLSX export path is more complete.`,
-          ],
-        };
+        // Bonus hunt: a link-edge table (source→destination) unlocks Module D
+        // without a separate All Inlinks upload. Layout varies by SF version.
+        const edges: InlinkEdge[] = [];
+        for (const linkTable of tables) {
+          const linkCols =
+            db.exec(`PRAGMA table_info("${linkTable}")`)[0]?.values.map((v) => String(v[1])) ?? [];
+          const srcCol = linkCols.find((c) => /^(source|from|from_url|source_url)$/i.test(c));
+          const dstCol = linkCols.find((c) => /^(destination|target|to|to_url|target_url|destination_url)$/i.test(c));
+          if (!srcCol || !dstCol) continue;
+          const anchorCol = linkCols.find((c) => /anchor|link_text/i.test(c));
+          const linkStmt = db.prepare(`SELECT * FROM "${linkTable}"`);
+          let n = 0;
+          while (linkStmt.step() && n < 500_000) {
+            const rec = linkStmt.getAsObject() as Record<string, unknown>;
+            const src = String(rec[srcCol] ?? "");
+            const dst = String(rec[dstCol] ?? "");
+            if (/^https?:\/\//i.test(src) && /^https?:\/\//i.test(dst)) {
+              edges.push({ source: src, target: dst, anchor: String(rec[anchorCol ?? ""] ?? "").trim() });
+            }
+            n++;
+          }
+          linkStmt.free();
+          if (edges.length > 0) break;
+        }
+        db.close();
+        const warnings = [
+          `Read ${rows.length.toLocaleString()} rows from proprietary table "${table}". Field coverage may be partial — the CSV/XLSX export path is more complete.`,
+        ];
+        if (edges.length > 0) {
+          warnings.push(`Recovered ${edges.length.toLocaleString()} link edges from the project database — Module D enabled automatically.`);
+        } else {
+          warnings.push("No readable link-edge table found in this project — upload the All Inlinks export to enable Module D.");
+        }
+        return { rows, warnings, edges: edges.length > 0 ? edges : undefined };
       }
     }
     db.close();

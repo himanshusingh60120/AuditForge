@@ -250,6 +250,25 @@ async function parseZipContainer(file: File, onProgress: (n: number) => void): P
     }
   }
   if (sqliteEntries.length === 0) {
+    // Apache Derby signature: Screaming Frog's database storage mode keeps the
+    // crawl in Derby conglomerates (sql/seg0/*.dat + service.properties). Only
+    // the Derby engine (Java) can read that page format — but Screaming Frog's
+    // own CLI converts the whole project to CSV in one headless command.
+    const isDerby = files.some(
+      (e) => /(^|\/)seg0\/c[0-9a-f]+\.dat$/i.test(e.name) || /(^|\/)service\.properties$/i.test(e.name)
+    );
+    if (isDerby) {
+      const biggest = bySize[0];
+      throw new Error(
+        `This project uses Screaming Frog's database storage mode (Apache Derby — found ${files.length.toLocaleString()} database files, largest ${(biggest.uncompSize / 1024 / 1024 / 1024).toFixed(2)}GB). ` +
+          `Derby can only be read by Screaming Frog itself, and no browser can hold a table that size. ` +
+          `The fix is one command — Screaming Frog's own CLI converts this exact file to CSVs headlessly (close the Screaming Frog app first):\n\n` +
+          `Windows — in Command Prompt:\ncd "C:\\Program Files (x86)\\Screaming Frog SEO Spider"\nScreamingFrogSEOSpiderCli.exe --headless --load-crawl "<path to your .dbseospider>" --export-tabs "Internal:All" --bulk-export "All Inlinks" --export-format csv --output-folder "C:\\auditforge-export" --overwrite\n\n` +
+          `macOS/Linux: same flags via ScreamingFrogSEOSpiderLauncher.\n\n` +
+          `That produces internal_all.csv — upload it here (stream-parsed, no size limit, the whole crawl at once) — and all_inlinks.csv — upload as All Inlinks to enable Module D. ` +
+          `If the bulk export name errors, run: ScreamingFrogSEOSpiderCli.exe --help bulk-export`
+      );
+    }
     const listing = bySize
       .slice(0, 8)
       .map((e) => `${e.name} (${(e.uncompSize / 1024 / 1024).toFixed(1)}MB)`)
@@ -391,6 +410,8 @@ export interface InlinkEdge {
 }
 
 /** Screaming Frog "All Inlinks" export: Type, Source, Destination, ... Anchor Text ... */
+export const MAX_INLINK_EDGES = 2_000_000;
+
 export function parseAllInlinksCsv(
   file: File,
   onProgress: (n: number) => void
@@ -401,7 +422,11 @@ export function parseAllInlinksCsv(
     Papa.parse<Record<string, string>>(file, {
       header: true,
       skipEmptyLines: true,
-      chunk: (chunk) => {
+      chunk: (chunk, parser) => {
+        if (edges.length >= MAX_INLINK_EDGES) {
+          parser.abort(); // memory guard \u2014 PageRank on 2M edges is already representative
+          return;
+        }
         for (const rec of chunk.data) {
           const keys = Object.keys(rec);
           const src = rec[keys.find((k) => /^source$/i.test(k)) ?? ""];

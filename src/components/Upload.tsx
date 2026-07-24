@@ -24,6 +24,17 @@ const fmtSize = (bytes: number): string =>
 
 export function validateCrawlFile(file: File): string | null {
   const name = file.name.toLowerCase();
+  if (name.endsWith(".bat") || name.endsWith(".cmd")) {
+    return (
+      "That's the converter — it runs on your computer, not here.\n\n" +
+      "1. Close Screaming Frog completely (check the system tray)\n" +
+      "2. In Windows Explorer, drag your .dbseospider file ONTO this .bat file\n" +
+      "3. A window opens and runs the export — wait for SUCCESS\n" +
+      "4. It creates an \"auditforge-export\" folder next to your project file\n" +
+      "5. Come back here and drop internal_all.csv on this upload zone\n" +
+      "6. Add all_inlinks.csv in the \"All Inlinks\" slot for link-equity modeling"
+    );
+  }
   const rule = LIMITS.find((l) => name.endsWith(l.ext));
   if (!rule) return `"${file.name}" isn't an accepted format. Upload ${ACCEPT.join(", ")}.`;
   if (file.size === 0) return `"${file.name}" is empty.`;

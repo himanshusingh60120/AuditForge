@@ -1,5 +1,6 @@
 "use client";
 import Papa from "papaparse";
+import { listZipEntries, peekZipEntry, readZipEntry, ZipEntry } from "./zip";
 import { CrawlRow, CrawlRowSchema, GscRow } from "./schema";
 
 /** Header aliases → normalized field. Tolerant to Screaming Frog version drift. */
@@ -140,35 +141,38 @@ export async function parseCrawlXlsx(
 }
 
 const SQLITE_MAGIC = "SQLite format 3\u0000";
+const CSV_GUIDANCE =
+  "In Screaming Frog open the crawl, go to the Internal tab \u2192 Export \u2192 save 'Internal: All' as CSV, then upload that here. " +
+  "CSV is stream-parsed with no practical size limit, so this always works regardless of project size.";
+const MAX_INNER_DB = 1_800 * 1024 * 1024; // browsers run out of address space past ~2GB
 
-/**
- * Best-effort .dbseospider ingestion. The format is proprietary and SQLite-backed;
- * table layout varies by Screaming Frog version. We open it with sql.js, look for a
- * table with URL-shaped columns, and map what we can. On any failure we throw a
- * message that routes the user to the fully supported CSV/XLSX path.
- */
-export async function parseDbSeoSpider(
-  file: File,
-  onProgress: (rowsParsed: number) => void
+function sniff(bytes: Uint8Array): "sqlite" | "zip" | "gzip" | "unknown" {
+  const ascii = new TextDecoder().decode(bytes.subarray(0, 16));
+  if (ascii === SQLITE_MAGIC) return "sqlite";
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return "zip"; // PK
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) return "gzip";
+  return "unknown";
+}
+
+const isSqliteBytes = (b: Uint8Array): boolean =>
+  new TextDecoder().decode(b.subarray(0, 16)) === SQLITE_MAGIC;
+
+/** Parse an in-memory SQLite database: find the URL table, map rows, hunt for a link-edge table. */
+async function parseSqliteBytes(
+  bytes: Uint8Array,
+  onProgress: (n: number) => void,
+  origin: string
 ): Promise<ParseResult> {
-  const guidance =
-    "Couldn't read this .dbseospider database (the internal layout is proprietary and version-specific). " +
-    "In Screaming Frog use Bulk Export → or the top Export button on the Internal tab → save 'Internal: All' as CSV or XLSX, then upload that here. The CSV/XLSX path is fully supported.";
-  const head = new TextDecoder().decode(new Uint8Array(await file.slice(0, 16).arrayBuffer()));
-  if (head !== SQLITE_MAGIC) {
-    throw new Error(
-      "This file isn't a SQLite database — likely a compressed .seospider project. " + guidance
-    );
-  }
+  const initSqlJs = (await import("sql.js")).default;
+  const SQL = await initSqlJs(
+    typeof window === "undefined" ? {} : { locateFile: (f: string) => `https://sql.js.org/dist/${f}` }
+  );
+  const db = new SQL.Database(bytes);
   try {
-    const initSqlJs = (await import("sql.js")).default;
-    const SQL = await initSqlJs({
-      locateFile: (f: string) => `https://sql.js.org/dist/${f}`,
-    });
-    const db = new SQL.Database(new Uint8Array(await file.arrayBuffer()));
     const tables: string[] = [];
     const res = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
     for (const row of res[0]?.values ?? []) tables.push(String(row[0]));
+
     for (const table of tables) {
       const cols = db.exec(`PRAGMA table_info("${table}")`)[0]?.values.map((v) => String(v[1])) ?? [];
       const urlCol = cols.find((c) => /^(url|address)$/i.test(c));
@@ -184,48 +188,156 @@ export async function parseDbSeoSpider(
         if (++i % 2000 === 0) onProgress(i);
       }
       stmt.free();
-      if (rows.length > 0) {
-        // Bonus hunt: a link-edge table (source→destination) unlocks Module D
-        // without a separate All Inlinks upload. Layout varies by SF version.
-        const edges: InlinkEdge[] = [];
-        for (const linkTable of tables) {
-          const linkCols =
-            db.exec(`PRAGMA table_info("${linkTable}")`)[0]?.values.map((v) => String(v[1])) ?? [];
-          const srcCol = linkCols.find((c) => /^(source|from|from_url|source_url)$/i.test(c));
-          const dstCol = linkCols.find((c) => /^(destination|target|to|to_url|target_url|destination_url)$/i.test(c));
-          if (!srcCol || !dstCol) continue;
-          const anchorCol = linkCols.find((c) => /anchor|link_text/i.test(c));
-          const linkStmt = db.prepare(`SELECT * FROM "${linkTable}"`);
-          let n = 0;
-          while (linkStmt.step() && n < 500_000) {
-            const rec = linkStmt.getAsObject() as Record<string, unknown>;
-            const src = String(rec[srcCol] ?? "");
-            const dst = String(rec[dstCol] ?? "");
-            if (/^https?:\/\//i.test(src) && /^https?:\/\//i.test(dst)) {
-              edges.push({ source: src, target: dst, anchor: String(rec[anchorCol ?? ""] ?? "").trim() });
-            }
-            n++;
+      if (rows.length === 0) continue;
+
+      // Bonus hunt: a link-edge table (source\u2192destination) unlocks Module D automatically.
+      const edges: InlinkEdge[] = [];
+      for (const linkTable of tables) {
+        const linkCols = db.exec(`PRAGMA table_info("${linkTable}")`)[0]?.values.map((v) => String(v[1])) ?? [];
+        const srcCol = linkCols.find((c) => /^(source|from|from_url|source_url)$/i.test(c));
+        const dstCol = linkCols.find((c) => /^(destination|target|to|to_url|target_url|destination_url)$/i.test(c));
+        if (!srcCol || !dstCol) continue;
+        const anchorCol = linkCols.find((c) => /anchor|link_text/i.test(c));
+        const linkStmt = db.prepare(`SELECT * FROM "${linkTable}"`);
+        let n = 0;
+        while (linkStmt.step() && n < 500_000) {
+          const rec = linkStmt.getAsObject() as Record<string, unknown>;
+          const src = String(rec[srcCol] ?? "");
+          const dst = String(rec[dstCol] ?? "");
+          if (/^https?:\/\//i.test(src) && /^https?:\/\//i.test(dst)) {
+            edges.push({ source: src, target: dst, anchor: String(rec[anchorCol ?? ""] ?? "").trim() });
           }
-          linkStmt.free();
-          if (edges.length > 0) break;
+          n++;
         }
-        db.close();
-        const warnings = [
-          `Read ${rows.length.toLocaleString()} rows from proprietary table "${table}". Field coverage may be partial — the CSV/XLSX export path is more complete.`,
-        ];
-        if (edges.length > 0) {
-          warnings.push(`Recovered ${edges.length.toLocaleString()} link edges from the project database — Module D enabled automatically.`);
-        } else {
-          warnings.push("No readable link-edge table found in this project — upload the All Inlinks export to enable Module D.");
-        }
-        return { rows, warnings, edges: edges.length > 0 ? edges : undefined };
+        linkStmt.free();
+        if (edges.length > 0) break;
       }
+      const warnings = [
+        `Read ${rows.length.toLocaleString()} rows from ${origin} table "${table}". Field coverage may be partial \u2014 the CSV export path is more complete.`,
+      ];
+      if (edges.length > 0) {
+        warnings.push(`Recovered ${edges.length.toLocaleString()} link edges \u2014 Module D enabled automatically.`);
+      } else {
+        warnings.push("No readable link-edge table found \u2014 upload the All Inlinks export to enable Module D.");
+      }
+      return { rows, warnings, edges: edges.length > 0 ? edges : undefined };
     }
+    throw new Error(`No table with URL + status-code columns found (tables present: ${tables.slice(0, 12).join(", ") || "none"}). ` + CSV_GUIDANCE);
+  } finally {
     db.close();
-    throw new Error(guidance);
-  } catch (e) {
-    throw new Error(e instanceof Error && e.message.includes("Internal: All") ? e.message : guidance);
   }
+}
+
+/** ZIP container: list entries WITHOUT loading the archive, sniff each for SQLite, extract the best one. */
+async function parseZipContainer(file: File, onProgress: (n: number) => void): Promise<ParseResult> {
+  let entries: ZipEntry[];
+  try {
+    entries = await listZipEntries(file);
+  } catch (e) {
+    throw new Error(`This file is a ZIP-style archive but its directory couldn't be read (${e instanceof Error ? e.message : "parse error"}). ` + CSV_GUIDANCE);
+  }
+  const files = entries.filter((e) => !e.name.endsWith("/") && e.uncompSize > 0);
+  if (files.length === 0) throw new Error("This archive is empty. " + CSV_GUIDANCE);
+
+  // Sniff decompressed heads, largest entries first (the crawl DB dominates the archive).
+  const bySize = [...files].sort((a, b) => b.uncompSize - a.uncompSize);
+  const sqliteEntries: ZipEntry[] = [];
+  for (const e of bySize.slice(0, 40)) {
+    try {
+      if (isSqliteBytes(await peekZipEntry(file, e, 16))) sqliteEntries.push(e);
+    } catch {
+      /* unreadable entry \u2014 keep sniffing the rest */
+    }
+  }
+  if (sqliteEntries.length === 0) {
+    const listing = bySize
+      .slice(0, 8)
+      .map((e) => `${e.name} (${(e.uncompSize / 1024 / 1024).toFixed(1)}MB)`)
+      .join(", ");
+    throw new Error(
+      `Opened the archive (${files.length.toLocaleString()} files: ${listing}${files.length > 8 ? ", \u2026" : ""}) but none is a SQLite database \u2014 ` +
+        `this Screaming Frog version stores crawls in a format that can't be read in the browser. ` +
+        CSV_GUIDANCE
+    );
+  }
+  const target = sqliteEntries[0];
+  if (target.uncompSize > MAX_INNER_DB) {
+    throw new Error(
+      `Found the database inside ("${target.name}", ${(target.uncompSize / 1024 / 1024 / 1024).toFixed(2)}GB uncompressed) but it's too large to load in a browser tab. ` +
+        CSV_GUIDANCE
+    );
+  }
+  onProgress(0);
+  const bytes = await readZipEntry(file, target, MAX_INNER_DB);
+  const result = await parseSqliteBytes(bytes, onProgress, `archived database "${target.name}",`);
+  result.warnings.unshift(
+    `Opened the project archive and extracted "${target.name}" (${(target.uncompSize / 1024 / 1024).toFixed(1)}MB) without loading the full archive into memory.`
+  );
+  return result;
+}
+
+/**
+ * .seospider / .dbseospider ingestion. These are containers whose layout varies
+ * by Screaming Frog version: raw SQLite, a ZIP archive wrapping the database,
+ * or a gzip-compressed stream. We sniff the real format and open accordingly;
+ * every failure path names exactly what was found and routes to the CSV export.
+ */
+export async function parseDbSeoSpider(
+  file: File,
+  onProgress: (rowsParsed: number) => void
+): Promise<ParseResult> {
+  const head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const kind = sniff(head);
+
+  if (kind === "sqlite") {
+    if (file.size > MAX_INNER_DB) throw new Error(`This SQLite database is ${(file.size / 1024 / 1024 / 1024).toFixed(2)}GB \u2014 too large to load in a browser tab. ` + CSV_GUIDANCE);
+    return parseSqliteBytes(new Uint8Array(await file.arrayBuffer()), onProgress, "proprietary");
+  }
+  if (kind === "zip") {
+    return parseZipContainer(file, onProgress);
+  }
+  if (kind === "gzip") {
+    // Stream-decompress just the head to see what's inside the gzip wrapper.
+    const headStream = file.slice(0, 256 * 1024).stream().pipeThrough(new DecompressionStream("gzip"));
+    let inner = new Uint8Array(0);
+    try {
+      const reader = headStream.getReader();
+      const { value } = await reader.read();
+      inner = value ?? inner;
+      await reader.cancel().catch(() => undefined);
+    } catch {
+      /* truncated stream is fine for sniffing */
+    }
+    if (isSqliteBytes(inner)) {
+      const full = file.stream().pipeThrough(new DecompressionStream("gzip"));
+      const reader = full.getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        total += value.length;
+        if (total > MAX_INNER_DB) {
+          await reader.cancel();
+          throw new Error("The compressed database expands past what a browser tab can hold. " + CSV_GUIDANCE);
+        }
+      }
+      const bytes = new Uint8Array(total);
+      let o = 0;
+      for (const c of chunks) {
+        bytes.set(c, o);
+        o += c.length;
+      }
+      return parseSqliteBytes(bytes, onProgress, "gzip-wrapped");
+    }
+    throw new Error(
+      "This is a gzip-compressed Screaming Frog project, but the data inside isn't a SQLite database \u2014 it's a serialization format that can't be read outside Screaming Frog. " +
+        CSV_GUIDANCE
+    );
+  }
+  const hex = Array.from(head.subarray(0, 8)).map((b) => b.toString(16).padStart(2, "0")).join(" ");
+  throw new Error(`Unrecognized file format (first bytes: ${hex}). ` + CSV_GUIDANCE);
 }
 
 export async function parseCrawlFile(

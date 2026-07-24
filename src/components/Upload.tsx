@@ -61,6 +61,20 @@ export function crawlFileWarning(file: File): string | null {
   return null;
 }
 
+/** Classify a CSV by its header row so multiple files can be dropped together. */
+export async function classifyCsv(file: File): Promise<"crawl" | "inlinks" | "gsc"> {
+  try {
+    const head = (await file.slice(0, 4096).text()).toLowerCase();
+    const firstLine = head.split(/\r?\n/)[0] ?? "";
+    if (firstLine.includes("source") && firstLine.includes("destination")) return "inlinks";
+    if ((firstLine.includes("address") || firstLine.includes("url")) && head.includes("status code")) return "crawl";
+    if (firstLine.includes("clicks") && firstLine.includes("impressions")) return "gsc";
+  } catch {
+    /* unreadable head — let the crawl parser produce the real error */
+  }
+  return "crawl";
+}
+
 interface Props {
   onCrawlFile: (f: File) => void;
   onInlinksFile: (f: File) => void;
@@ -96,20 +110,48 @@ export default function Upload({
   const [sitemap, setSitemap] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback(
-    (file: File | undefined | null) => {
-      if (!file) return;
-      const err = validateCrawlFile(file);
+  const handleFiles = useCallback(
+    async (fileList: FileList | null | undefined) => {
+      const files = Array.from(fileList ?? []);
+      if (files.length === 0) return;
+      setError("");
+      setWarning("");
+
+      const routed: string[] = [];
+      let crawlFile: File | null = null;
+      for (const file of files) {
+        const name = file.name.toLowerCase();
+        if (name.endsWith(".csv") && files.length > 1) {
+          const kind = await classifyCsv(file);
+          if (kind === "inlinks") {
+            onInlinksFile(file);
+            routed.push(`${file.name} → All Inlinks (Module D)`);
+            continue;
+          }
+          if (kind === "gsc") {
+            onGscFile(file);
+            routed.push(`${file.name} → GSC enrichment`);
+            continue;
+          }
+        }
+        if (crawlFile) {
+          setError("Drop one crawl file at a time (plus optional all_inlinks.csv / GSC CSV alongside it).");
+          return;
+        }
+        crawlFile = file;
+      }
+      if (routed.length > 0) setWarning(`Auto-routed: ${routed.join(" · ")}`);
+      if (!crawlFile) return;
+      const err = validateCrawlFile(crawlFile);
       if (err) {
         setError(err);
-        setWarning("");
         return;
       }
-      setError("");
-      setWarning(crawlFileWarning(file) ?? "");
-      onCrawlFile(file);
+      const w = crawlFileWarning(crawlFile);
+      if (w) setWarning((prev) => (prev ? `${prev}\n${w}` : w));
+      onCrawlFile(crawlFile);
     },
-    [onCrawlFile]
+    [onCrawlFile, onInlinksFile, onGscFile]
   );
 
   return (
@@ -128,7 +170,7 @@ export default function Upload({
         onDrop={(e) => {
           e.preventDefault();
           setDragging(false);
-          handleFile(e.dataTransfer.files?.[0]);
+          void handleFiles(e.dataTransfer.files);
         }}
         className={`cursor-pointer rounded-lg border-2 border-dashed px-8 py-14 text-center transition ${
           dragging ? "border-forge bg-forge/5" : "border-edge bg-panel/50 hover:border-steel"
@@ -139,12 +181,17 @@ export default function Upload({
         <p className="mt-2 text-sm text-steel">
           .csv (&quot;Internal: All&quot; — stream-parsed, no practical size limit) · .xlsx · .seospider / .dbseospider (best-effort, ≤2GB)
         </p>
+        <p className="mt-2 text-xs text-forge/80">
+          Converted a project with the .bat? Drop internal_all.csv and all_inlinks.csv here <em>together</em> — they&apos;re
+          routed automatically.
+        </p>
         <input
           ref={inputRef}
           type="file"
+          multiple
           accept={ACCEPT.join(",")}
           className="hidden"
-          onChange={(e) => handleFile(e.target.files?.[0])}
+          onChange={(e) => void handleFiles(e.target.files)}
         />
       </div>
       {error && (
@@ -153,7 +200,7 @@ export default function Upload({
         </p>
       )}
       {warning && (
-        <p className="rounded border border-forge/50 bg-forge/10 px-3 py-2 text-sm text-forge">{warning}</p>
+        <p className="whitespace-pre-wrap rounded border border-forge/50 bg-forge/10 px-3 py-2 text-sm text-forge">{warning}</p>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">

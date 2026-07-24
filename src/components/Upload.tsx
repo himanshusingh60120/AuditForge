@@ -2,14 +2,51 @@
 import { useCallback, useRef, useState } from "react";
 
 const ACCEPT = [".csv", ".xlsx", ".seospider", ".dbseospider"];
-const MAX_BYTES = 500 * 1024 * 1024; // 500MB — dbseospider projects get big
+const GB = 1024 * 1024 * 1024;
+
+/**
+ * Limits differ by format because the parsers differ:
+ *  - CSV is stream-parsed chunk by chunk, so the file never sits in memory whole.
+ *    Effectively unlimited; the cap is a sanity check.
+ *  - XLSX and .dbseospider MUST be loaded into memory in full (SheetJS needs the
+ *    whole workbook; SQLite needs the whole database). Past roughly 1.5GB a
+ *    browser tab runs out of address space no matter what we allow here.
+ */
+const LIMITS: { ext: string; max: number; streamed: boolean }[] = [
+  { ext: ".csv", max: 16 * GB, streamed: true },
+  { ext: ".xlsx", max: 2 * GB, streamed: false },
+  { ext: ".dbseospider", max: 2 * GB, streamed: false },
+  { ext: ".seospider", max: 2 * GB, streamed: false },
+];
+
+const fmtSize = (bytes: number): string =>
+  bytes >= GB ? `${(bytes / GB).toFixed(1)}GB` : `${Math.round(bytes / 1024 / 1024)}MB`;
 
 export function validateCrawlFile(file: File): string | null {
   const name = file.name.toLowerCase();
-  if (!ACCEPT.some((ext) => name.endsWith(ext)))
-    return `"${file.name}" isn't an accepted format. Upload ${ACCEPT.join(", ")}.`;
-  if (file.size > MAX_BYTES) return `"${file.name}" exceeds the 500MB limit.`;
+  const rule = LIMITS.find((l) => name.endsWith(l.ext));
+  if (!rule) return `"${file.name}" isn't an accepted format. Upload ${ACCEPT.join(", ")}.`;
   if (file.size === 0) return `"${file.name}" is empty.`;
+  if (file.size > rule.max) {
+    return rule.streamed
+      ? `"${file.name}" is ${fmtSize(file.size)}, past the ${fmtSize(rule.max)} ceiling. Split the export and audit it in parts.`
+      : `"${file.name}" is ${fmtSize(file.size)}. ${rule.ext} files must be loaded into memory whole, and browsers run out of address space past ${fmtSize(
+          rule.max
+        )}. Export "Internal: All" as CSV from Screaming Frog instead — CSV is stream-parsed, so size stops mattering.`;
+  }
+  return null;
+}
+
+/** Non-blocking heads-up for files that are legal but heavy. */
+export function crawlFileWarning(file: File): string | null {
+  const name = file.name.toLowerCase();
+  const streamed = name.endsWith(".csv");
+  if (!streamed && file.size > 700 * 1024 * 1024) {
+    return `${fmtSize(file.size)} ${name.endsWith(".xlsx") ? "XLSX" : "project file"} — this format loads into memory whole, so the tab may run heavy or crash. If it struggles, export "Internal: All" as CSV (stream-parsed, no size ceiling) and use that instead.`;
+  }
+  if (streamed && file.size > 2 * GB) {
+    return `${fmtSize(file.size)} CSV — parsing streams fine, but a crawl this large produces a lot of rows to hold in memory. Close other tabs before starting.`;
+  }
   return null;
 }
 
@@ -44,6 +81,7 @@ export default function Upload({
 }: Props) {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [sitemap, setSitemap] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -53,9 +91,11 @@ export default function Upload({
       const err = validateCrawlFile(file);
       if (err) {
         setError(err);
+        setWarning("");
         return;
       }
       setError("");
+      setWarning(crawlFileWarning(file) ?? "");
       onCrawlFile(file);
     },
     [onCrawlFile]
@@ -86,7 +126,7 @@ export default function Upload({
         <p className="font-mono text-xs uppercase tracking-[0.25em] text-forge">crawl input</p>
         <p className="mt-3 text-lg">Drop your Screaming Frog crawl here</p>
         <p className="mt-2 text-sm text-steel">
-          .csv / .xlsx (&quot;Internal: All&quot; export — fully supported) · .seospider / .dbseospider (best-effort)
+          .csv (&quot;Internal: All&quot; — stream-parsed, no practical size limit) · .xlsx · .seospider / .dbseospider (best-effort, ≤2GB)
         </p>
         <input
           ref={inputRef}
@@ -100,6 +140,9 @@ export default function Upload({
         <p role="alert" className="rounded border border-ember/50 bg-ember/10 px-3 py-2 text-sm text-ember">
           {error}
         </p>
+      )}
+      {warning && (
+        <p className="rounded border border-forge/50 bg-forge/10 px-3 py-2 text-sm text-forge">{warning}</p>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2">

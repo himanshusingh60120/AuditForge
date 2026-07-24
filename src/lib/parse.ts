@@ -266,7 +266,8 @@ async function parseZipContainer(file: File, onProgress: (n: number) => void): P
           `Windows — in Command Prompt:\ncd "C:\\Program Files (x86)\\Screaming Frog SEO Spider"\nScreamingFrogSEOSpiderCli.exe --headless --load-crawl "<path to your .dbseospider>" --export-tabs "Internal:All" --bulk-export "All Inlinks" --export-format csv --output-folder "C:\\auditforge-export" --overwrite\n\n` +
           `macOS/Linux: same flags via ScreamingFrogSEOSpiderLauncher.\n\n` +
           `That produces internal_all.csv — upload it here (stream-parsed, no size limit, the whole crawl at once) — and all_inlinks.csv — upload as All Inlinks to enable Module D. ` +
-          `If the bulk export name errors, run: ScreamingFrogSEOSpiderCli.exe --help bulk-export`
+          `If the bulk export name errors, run: ScreamingFrogSEOSpiderCli.exe --help bulk-export\n\n` +
+          `Prefer not to type any of this? Use the one-click converter button below \u2014 drag your project file onto the downloaded .bat and it does all of the above for you.`
       );
     }
     const listing = bySize

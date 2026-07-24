@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+::selection {
+  background: rgba(245, 159, 69, 0.35);
+}
+
+.evidence {
+  @apply block whitespace-pre-wrap break-all rounded border border-edge bg-black/40 px-2 py-1 font-mono text-[11px] leading-relaxed text-forge/90;
+}
+
+.btn {
+  @apply inline-flex items-center gap-2 rounded border border-edge bg-panel px-3 py-1.5 text-sm text-slate-200 transition hover:border-forge/60 hover:text-forge disabled:cursor-not-allowed disabled:opacity-40;
+}
+.btn:focus-visible {
+  @apply outline outline-2 outline-forge;
+}
+
+.chip {
+  @apply inline-block rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Stakeholder PDF: print the report cleanly (File → Print → Save as PDF) */
+@media print {
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .evidence {
+    color: #7c4a00;
+    border-color: #ddd;
+    background: #faf7f2;
+  }
+  section {
+    break-inside: avoid;
+  }
+}

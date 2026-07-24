@@ -20,9 +20,28 @@ interface Props {
   onSitemapUrl: (u: string) => void;
   onPreviousAudit: (f: File) => void;
   busy: boolean;
+  gscStatus: "unknown" | "unconfigured" | "disconnected" | "connected";
+  gscSites: string[];
+  gscSite: string;
+  onGscConnect: () => void;
+  onGscSelect: (site: string) => void;
+  onGscDisconnect: () => void;
 }
 
-export default function Upload({ onCrawlFile, onInlinksFile, onGscFile, onSitemapUrl, onPreviousAudit, busy }: Props) {
+export default function Upload({
+  onCrawlFile,
+  onInlinksFile,
+  onGscFile,
+  onSitemapUrl,
+  onPreviousAudit,
+  busy,
+  gscStatus,
+  gscSites,
+  gscSite,
+  onGscConnect,
+  onGscSelect,
+  onGscDisconnect,
+}: Props) {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
   const [sitemap, setSitemap] = useState("");
@@ -88,7 +107,10 @@ export default function Upload({ onCrawlFile, onInlinksFile, onGscFile, onSitema
           <span className="block font-mono text-[10px] uppercase tracking-widest text-steel">
             optional · All Inlinks export
           </span>
-          <span className="mt-1 block text-xs text-steel">Unlocks link-equity modeling (Module D)</span>
+          <span className="mt-1 block text-xs text-steel">
+            Unlocks link-equity modeling (Module D). Needed for CSV/XLSX crawls — &quot;Internal: All&quot; has inlink
+            counts only, not the link graph. For .dbseospider projects we try to read the edges automatically.
+          </span>
           <input
             type="file"
             accept=".csv"
@@ -97,21 +119,62 @@ export default function Upload({ onCrawlFile, onInlinksFile, onGscFile, onSitema
             onChange={(e) => e.target.files?.[0] && onInlinksFile(e.target.files[0])}
           />
         </label>
-        <label className="rounded border border-edge bg-panel/50 p-3 text-sm">
+        <div className="rounded border border-edge bg-panel/50 p-3 text-sm">
           <span className="block font-mono text-[10px] uppercase tracking-widest text-steel">
-            optional · GSC Pages export (CSV)
+            google search console — automatic
           </span>
-          <span className="mt-1 block text-xs text-steel">
-            Search Console → Performance → Export → Pages. Unlocks Impact Scores &amp; money leaks.
-          </span>
-          <input
-            type="file"
-            accept=".csv"
-            disabled={busy}
-            className="mt-2 block w-full text-xs file:mr-2 file:rounded file:border file:border-edge file:bg-ink file:px-2 file:py-1 file:text-xs file:text-slate-300"
-            onChange={(e) => e.target.files?.[0] && onGscFile(e.target.files[0])}
-          />
-        </label>
+          {gscStatus === "connected" ? (
+            <>
+              <span className="mt-1 block text-xs text-verdant">
+                ✓ Connected. Pick the property — clicks/impressions are pulled automatically during every audit.
+              </span>
+              <div className="mt-2 flex gap-2">
+                <select
+                  aria-label="GSC property"
+                  value={gscSite}
+                  disabled={busy}
+                  onChange={(e) => onGscSelect(e.target.value)}
+                  className="w-full rounded border border-edge bg-ink px-2 py-1 text-xs text-slate-200"
+                >
+                  <option value="">Auto-match property to crawl domain</option>
+                  {gscSites.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+                <button type="button" className="btn text-xs" onClick={onGscDisconnect} disabled={busy}>
+                  Disconnect
+                </button>
+              </div>
+            </>
+          ) : gscStatus === "unconfigured" ? (
+            <span className="mt-1 block text-xs text-steel">
+              OAuth keys not set on this deployment (see README). Fallback: upload the Search Console
+              Performance → Pages CSV below.
+            </span>
+          ) : (
+            <>
+              <span className="mt-1 block text-xs text-steel">
+                Connect once — every audit then pulls clicks/impressions per URL automatically. Unlocks
+                traffic-weighted Impact Scores &amp; money leaks.
+              </span>
+              <button type="button" className="btn mt-2 text-xs" onClick={onGscConnect} disabled={busy || gscStatus === "unknown"}>
+                Connect Google Search Console
+              </button>
+            </>
+          )}
+          {gscStatus !== "connected" && (
+            <input
+              type="file"
+              accept=".csv"
+              disabled={busy}
+              aria-label="GSC Pages CSV fallback"
+              className="mt-2 block w-full text-xs file:mr-2 file:rounded file:border file:border-edge file:bg-ink file:px-2 file:py-1 file:text-xs file:text-slate-300"
+              onChange={(e) => e.target.files?.[0] && onGscFile(e.target.files[0])}
+            />
+          )}
+        </div>
         <label className="rounded border border-edge bg-panel/50 p-3 text-sm">
           <span className="block font-mono text-[10px] uppercase tracking-widest text-steel">optional · sitemap URL</span>
           <div className="mt-2 flex gap-2">

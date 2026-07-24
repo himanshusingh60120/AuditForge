@@ -34,5 +34,15 @@ const noop = () => undefined;
       throw new Error("nodb: wrong message: " + msg);
     console.log("Archive w/o DB:       PASS — precise error naming contents + CSV route");
   }
+  // Derby-mode project (the 7GB real-world case) → actionable CLI recipe, no generic shrug
+  try {
+    await parseDbSeoSpider(await load("/tmp/fx/derby.dbseospider", "derby.dbseospider"), noop);
+    throw new Error("derby: should have thrown");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (!msg.includes("Apache Derby") || !msg.includes("--load-crawl") || !msg.includes("Internal:All") || !msg.includes("All Inlinks"))
+      throw new Error("derby: wrong message: " + msg.slice(0, 200));
+    console.log("Derby-mode project:   PASS — detected, error carries the exact CLI conversion command");
+  }
   console.log("\nALL ARCHIVE PARSER TESTS PASSED");
 })();

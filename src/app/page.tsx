@@ -58,16 +58,78 @@ export default function Home() {
   const [shareUrl, setShareUrl] = useState("");
   const [shareError, setShareError] = useState("");
   const [resumable, setResumable] = useState(false);
+  const [gscStatus, setGscStatus] = useState<"unknown" | "unconfigured" | "disconnected" | "connected">("unknown");
+  const [gscSites, setGscSites] = useState<string[]>([]);
+  const [gscSite, setGscSite] = useState("");
   const auditRef = useRef(audit);
   auditRef.current = audit;
+  const gscRef = useRef({ status: gscStatus, site: gscSite, sites: gscSites });
+  gscRef.current = { status: gscStatus, site: gscSite, sites: gscSites };
 
   // Resume: nothing lost on refresh.
   useEffect(() => {
     try {
       if (localStorage.getItem(STORAGE_KEY)) setResumable(true);
+      setGscSite(localStorage.getItem("auditforge:gsc-site") ?? "");
     } catch {
       /* storage unavailable */
     }
+  }, []);
+
+  // GSC: probe the connection and surface OAuth redirect outcomes.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("gsc") === "error") {
+      setError(`Google Search Console connection failed: ${params.get("reason") ?? "unknown"}. You can retry or use the CSV fallback.`);
+    }
+    if (params.has("gsc")) window.history.replaceState({}, "", "/");
+    (async () => {
+      try {
+        const res = await fetch("/api/gsc/sites");
+        if (res.ok) {
+          const data = (await res.json()) as { sites: string[] };
+          setGscSites(data.sites);
+          setGscStatus("connected");
+        } else if (res.status === 501) setGscStatus("unconfigured");
+        else setGscStatus("disconnected");
+      } catch {
+        setGscStatus("disconnected");
+      }
+    })();
+  }, []);
+
+  const handleGscSelect = useCallback((site: string) => {
+    setGscSite(site);
+    try {
+      localStorage.setItem("auditforge:gsc-site", site);
+    } catch {
+      /* best effort */
+    }
+  }, []);
+
+  const handleGscDisconnect = useCallback(async () => {
+    await fetch("/api/gsc/disconnect", { method: "POST" }).catch(() => undefined);
+    setGscStatus("disconnected");
+    setGscSites([]);
+  }, []);
+
+  /** Auto-match a GSC property to the crawl's domain when the user hasn't picked one. */
+  const resolveGscProperty = useCallback((crawlHost: string): string => {
+    const { status, site, sites } = gscRef.current;
+    if (status !== "connected") return "";
+    if (site) return site;
+    const host = crawlHost.replace(/^www\./, "");
+    return (
+      sites.find((s) => s === `sc-domain:${host}`) ??
+      sites.find((s) => {
+        try {
+          return new URL(s).hostname.replace(/^www\./, "") === host;
+        } catch {
+          return false;
+        }
+      }) ??
+      ""
+    );
   }, []);
 
   const persist = useCallback((state: AuditState) => {
@@ -185,12 +247,16 @@ export default function Home() {
         setStage("parse");
         setProgress(-1);
         setDetail(`Stream-parsing ${file.name}…`);
-        const { rows, warnings } = await parseCrawlFile(file, (n) =>
+        const { rows, warnings, edges } = await parseCrawlFile(file, (n) =>
           setDetail(`Stream-parsing ${file.name} · ${n.toLocaleString()} rows`)
         );
         state.rows = rows;
         state.parseWarnings = warnings;
         warnings.forEach(note);
+        if (edges && edges.length > 0) {
+          state.inlinksLoaded = true;
+          state.pagerank = computePagerank(edges, rows);
+        }
 
         // 2 — detect
         setStage("detect");
@@ -267,10 +333,37 @@ export default function Home() {
         // 4 — enrich
         setStage("enrich");
         setProgress(-1);
+        if (state.gsc.length === 0 && gscRef.current.status === "connected") {
+          let crawlHost = "";
+          try {
+            crawlHost = new URL(rows[0].url).hostname;
+          } catch {
+            /* keep empty */
+          }
+          const property = resolveGscProperty(crawlHost);
+          if (property) {
+            setDetail(`Pulling Search Console data for ${property} (last 28 days)…`);
+            try {
+              const res = await fetch("/api/gsc/query", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ siteUrl: property }),
+              });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.error ?? `GSC query failed (${res.status})`);
+              state.gsc = data.rows;
+              note(`GSC auto-pulled: ${state.gsc.length.toLocaleString()} URLs with search data from ${property} (${data.window.start} → ${data.window.end}).`);
+            } catch (e) {
+              note(`GSC auto-pull skipped: ${e instanceof Error ? e.message : "request failed"}. CSV fallback still available.`);
+            }
+          } else {
+            note(`GSC connected but no property matched the crawl domain "${crawlHost}" — pick one in the upload screen.`);
+          }
+        }
         setDetail(
           state.gsc.length > 0
             ? `Weighting impact scores with GSC data (${state.gsc.length.toLocaleString()} URLs)…`
-            : "No GSC data — impact scores weighted by internal inlinks (upload the GSC Pages CSV to unlock traffic weighting)."
+            : "No GSC data — impact scores weighted by internal inlinks."
         );
         issues = computeImpactScores(issues, rows, state.gsc);
         state.issues = issues.sort(
@@ -578,6 +671,12 @@ export default function Home() {
             onGscFile={handleGsc}
             onSitemapUrl={handleSitemap}
             onPreviousAudit={handlePreviousAudit}
+            gscStatus={gscStatus}
+            gscSites={gscSites}
+            gscSite={gscSite}
+            onGscConnect={() => (window.location.href = "/api/gsc/auth")}
+            onGscSelect={handleGscSelect}
+            onGscDisconnect={handleGscDisconnect}
           />
           <p className="mt-6 text-xs text-steel">
             Tip: add GSC / inlinks / sitemap / previous audit before dropping the crawl file — they&apos;re woven into the

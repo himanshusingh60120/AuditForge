@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Upload from "@/components/Upload";
 import Pipeline, { Stage } from "@/components/Pipeline";
 import Report, { PsiResult } from "@/components/Report";
-import { parseAllInlinksCsv, parseCrawlFile, parseGscPagesCsv } from "@/lib/parse";
+import { downloadConverterBat } from "@/lib/converter-bat";
+import { MAX_INLINK_EDGES, parseAllInlinksCsv, parseCrawlFile, parseGscPagesCsv } from "@/lib/parse";
 import { detectIssues } from "@/lib/detect";
 import {
   computeDelta,
@@ -464,7 +465,11 @@ export default function Home() {
           if (prev.rows.length > 0) persist(next);
           return next;
         });
-        note(`All Inlinks loaded: ${edges.length.toLocaleString()} hyperlink edges → Module D enabled.`);
+        note(
+          edges.length >= MAX_INLINK_EDGES
+            ? `All Inlinks loaded: capped at ${MAX_INLINK_EDGES.toLocaleString()} edges for memory safety — PageRank is computed on this (representative) sample.`
+            : `All Inlinks loaded: ${edges.length.toLocaleString()} hyperlink edges → Module D enabled.`
+        );
       } catch (e) {
         setError(e instanceof Error ? e.message : "Inlinks parse failed");
       }
@@ -637,9 +642,18 @@ export default function Home() {
       </header>
 
       {error && (
-        <p role="alert" className="mb-6 rounded border border-ember/50 bg-ember/10 px-3 py-2 text-sm text-ember">
-          {error}
-        </p>
+        <div role="alert" className="mb-6 rounded border border-ember/50 bg-ember/10 px-3 py-2 text-sm text-ember">
+          <p className="whitespace-pre-wrap">{error}</p>
+          {error.includes("Apache Derby") && (
+            <button
+              className="btn mt-3 border-forge/60 text-forge"
+              onClick={downloadConverterBat}
+              title="Windows batch file: drag your .dbseospider onto it and it runs the whole conversion for you."
+            >
+              ⬇ Download one-click converter (.bat)
+            </button>
+          )}
+        </div>
       )}
 
       {stage === "upload" && (

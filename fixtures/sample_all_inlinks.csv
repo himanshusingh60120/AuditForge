@@ -1,0 +1,26 @@
+Address,Content Type,Status Code,Indexability,Indexability Status,Title 1,Title 1 Length,Meta Description 1,Meta Description 1 Length,H1-1,H1-2,H2-1,Meta Robots 1,Canonical Link Element 1,Word Count,Crawl Depth,Inlinks,Outlinks,Response Time,Redirect URL,Redirect Type
+https://example.com/,text/html; charset=UTF-8,200,Indexable,,Example Domain — Home,21,Welcome to Example. We sell examples of every shape and size for teams that need examples fast.,96,Welcome to Example,,Why examples matter,"index, follow",https://example.com/,842,0,120,34,0.31,,
+https://example.com/products,text/html; charset=UTF-8,200,Indexable,,Products,8,,0,Products,,,index,https://example.com/products,412,1,45,28,0.42,,
+https://example.com/products?sort=price,text/html; charset=UTF-8,200,Non-Indexable,Canonicalised,Products,8,,0,Products,,,index,https://example.com/products,410,2,12,28,0.44,,
+https://example.com/products?sort=name,text/html; charset=UTF-8,200,Non-Indexable,Canonicalised,Products,8,,0,Products,,,index,https://example.com/products,410,2,11,28,0.40,,
+https://example.com/products?color=red,text/html; charset=UTF-8,200,Non-Indexable,Canonicalised,Products,8,,0,Products,,,index,https://example.com/products,405,2,9,28,0.47,,
+https://example.com/about,text/html; charset=UTF-8,200,Indexable,,About Us | Example — the very best example company in the entire world since 1998,80,About Example.,14,About,About the team,,index,,655,1,30,15,0.29,,
+https://example.com/blog,text/html; charset=UTF-8,200,Indexable,,Blog,4,Read the Example blog.,22,Blog,,,index,https://example.com/blog,220,1,25,40,0.35,,
+https://example.com/blog/old-post,text/html; charset=UTF-8,301,Non-Indexable,Redirected,,0,,0,,,,,,0,2,18,0,0.20,https://example.com/blog/interim-post,Permanent (301)
+https://example.com/blog/interim-post,text/html; charset=UTF-8,301,Non-Indexable,Redirected,,0,,0,,,,,,0,3,2,0,0.21,https://example.com/blog/new-post,Permanent (301)
+https://example.com/blog/new-post,text/html; charset=UTF-8,200,Indexable,,Our newest post about examples and how to use them properly,58,A deep dive into examples.,26,Our newest post,,,index,https://example.com/blog/new-post,95,2,8,12,0.38,,
+https://example.com/old-pricing,text/html; charset=UTF-8,302,Non-Indexable,Redirected,,0,,0,,,,,,0,2,22,0,0.19,https://example.com/pricing,Temporary (302)
+https://example.com/pricing,text/html; charset=UTF-8,200,Indexable,,Pricing,7,See our pricing plans.,22,Pricing,,Plan comparison,index,https://example.com/pricing,510,1,60,10,1.85,,
+https://example.com/contact,text/html; charset=UTF-8,200,Indexable,,Contact,7,See our pricing plans.,22,,,,index,https://example.com/contact,180,1,20,8,0.33,,
+https://example.com/legacy/widgets,text/html; charset=UTF-8,404,Non-Indexable,Client Error,,0,,0,,,,,,0,3,14,0,0.25,,
+https://example.com/api/status,text/html; charset=UTF-8,500,Non-Indexable,Server Error,,0,,0,,,,,,0,4,3,0,2.10,,
+https://example.com/secret-drafts,text/html; charset=UTF-8,200,Non-Indexable,Noindex,Draft hub,9,Internal drafts.,16,Drafts,,,"noindex, follow",,300,2,15,5,0.30,,
+https://example.com/deep/a/b/c/d/e,text/html; charset=UTF-8,200,Indexable,,A very deep page about niche examples for specialists,52,Niche examples explained.,25,Deep niche examples,,,index,https://example.com/deep/a/b/c/d/e,720,6,1,3,0.55,,
+https://example.com/orphaned-guide,text/html; charset=UTF-8,200,Indexable,,The orphaned guide to examples nobody links to anymore,53,An orphaned but useful guide.,29,The orphaned guide,,Chapter one,index,https://example.com/orphaned-guide,1450,1,0,6,0.36,,
+https://example.com/duplicate-a,text/html; charset=UTF-8,200,Indexable,,Products,8,Two pages one title.,20,Duplicate A,Duplicate A again,,index,https://example.com/duplicate-a,240,2,5,4,0.31,,
+https://example.com/conflicted,text/html; charset=UTF-8,200,Non-Indexable,Noindex,Conflicted page,15,Canonicalised and noindexed at once.,36,Conflicted,,,"noindex, follow",https://example.com/products,410,2,7,6,0.30,,
+https://example.com/canon-to-404,text/html; charset=UTF-8,200,Indexable,,Page whose canonical points somewhere broken sadly,49,Canonical target is a 404.,26,Canon to 404,,,index,https://example.com/legacy/widgets,380,2,4,5,0.32,,
+https://example.com/loop-1,text/html; charset=UTF-8,301,Non-Indexable,Redirected,,0,,0,,,,,,0,3,2,0,0.22,https://example.com/loop-2,Permanent (301)
+https://example.com/loop-2,text/html; charset=UTF-8,301,Non-Indexable,Redirected,,0,,0,,,,,,0,3,1,0,0.22,https://example.com/loop-1,Permanent (301)
+https://example.com/2024/03/archive,text/html; charset=UTF-8,200,Indexable,,March 2024 archive of example posts and updates,46,Archive of March 2024.,22,March 2024,,,index,https://example.com/2024/03/archive,90,3,2,20,0.41,,
+https://example.com/2024/04/archive,text/html; charset=UTF-8,200,Indexable,,April 2024 archive of example posts and updates,46,Archive of April 2024.,22,April 2024,,,index,https://example.com/2024/04/archive,88,3,2,20,0.40,,

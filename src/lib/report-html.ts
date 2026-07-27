@@ -19,6 +19,19 @@ const esc = (s: unknown): string =>
 /** Rows embedded per section — keeps the file emailable; XLSX has the complete set. */
 const SECTION_CAP = 750;
 
+/** Error-source block: sitemaps + referring pages (GSC URL Inspection) and crawl inlinks. */
+function sourcesHtml(i: Issue): string {
+  const bits: string[] = [];
+  if (i.gscCoverageState) bits.push(`<b>GSC indexing state:</b> ${esc(i.gscCoverageState)}`);
+  if (i.sourceSitemaps?.length)
+    bits.push(`<b>Sitemaps (GSC):</b><br>${i.sourceSitemaps.map((s) => `&nbsp;&nbsp;• ${esc(s)}`).join("<br>")}`);
+  if (i.sourceReferringPages?.length)
+    bits.push(`<b>Referring pages (GSC):</b><br>${i.sourceReferringPages.map((s) => `&nbsp;&nbsp;• ${esc(s)}`).join("<br>")}`);
+  if (i.sourceInternalInlinks?.length)
+    bits.push(`<b>Internal pages linking here (crawl):</b><br>${i.sourceInternalInlinks.map((s) => `&nbsp;&nbsp;• ${esc(s)}`).join("<br>")}`);
+  return bits.length ? `<div class="ev"><b>Error source:</b><br>${bits.join("<br>")}</div>` : "";
+}
+
 function issueRowsHtml(issues: Issue[], analyses: Map<string, { fixSteps: string[]; codeSnippet: string; rootCause: string; explanation: string }>): string {
   const shown = issues.slice(0, SECTION_CAP);
   const rows = shown
@@ -33,6 +46,7 @@ function issueRowsHtml(issues: Issue[], analyses: Map<string, { fixSteps: string
   <div class="ev"><b>Crawl:</b> ${esc(i.evidence)}</div>
   ${i.liveEvidence ? `<div class="ev live"><b>Live source:</b> ${esc(i.liveEvidence)}</div>` : ""}
   ${i.verifyError ? `<div class="ev err"><b>Verification failed:</b> ${esc(i.verifyError)}</div>` : ""}
+  ${sourcesHtml(i)}
   ${
     a
       ? `<details class="fix"><summary>Fix instructions</summary>
@@ -197,7 +211,7 @@ td { border-bottom:1px solid var(--line); padding:9px 8px; vertical-align:top; }
 .url, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11.5px; word-break:break-all; }
 .url { color:var(--muted); }
 .ev { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px;
-  background:var(--panel); border:1px solid var(--line); border-radius:4px; padding:4px 6px; margin-top:5px; word-break:break-word; }
+  background:var(--panel); border:1px solid var(--line); border-radius:4px; padding:4px 6px; margin-top:5px; word-break:break-word; white-space:pre-wrap; }
 .ev.live { border-color:#cfe3d4; background:#f2f9f4; }
 .ev.err { border-color:#f0d8d4; background:#fdf5f4; }
 .ts { font-size:10.5px; color:var(--muted); }

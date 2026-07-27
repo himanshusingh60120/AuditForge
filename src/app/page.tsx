@@ -15,6 +15,7 @@ import {
   healthScore,
 } from "@/lib/analysis";
 import { analyzeUrlHygiene, diffSitemap, HygieneFinding, SitemapDiff } from "@/lib/modules";
+import { attachCrawlInlinkSources, attachGscSources } from "@/lib/sources";
 import {
   AuditState,
   FixStatus,
@@ -24,6 +25,8 @@ import {
 } from "@/lib/schema";
 
 const VERIFY_BATCH = 8;
+/** Max confirmed error URLs traced via GSC URL Inspection per audit (quota: 2,000/day/property). */
+const GSC_INSPECT_CAP = 40;
 const VERIFY_CONCURRENCY = 3; // parallel batch requests; server adds per-URL delay inside each batch
 const STORAGE_KEY = "auditforge:last-audit";
 
@@ -339,6 +342,7 @@ export default function Home() {
             owner: "Dev",
             url,
             evidence: `Discovered in the live source of ${source} (not present in the crawl export)`,
+            sourceInternalInlinks: [`${source} — observed in live HTML during verification`],
             verification: "PENDING",
             impactScore: 0,
             fixStatus: "Open",
@@ -357,14 +361,15 @@ export default function Home() {
         // 4 — enrich
         setStage("enrich");
         setProgress(-1);
+        let crawlHost = "";
+        try {
+          crawlHost = new URL(rows[0].url).hostname;
+        } catch {
+          /* keep empty */
+        }
+        const gscProperty = gscRef.current.status === "connected" ? resolveGscProperty(crawlHost) : "";
         if (state.gsc.length === 0 && gscRef.current.status === "connected") {
-          let crawlHost = "";
-          try {
-            crawlHost = new URL(rows[0].url).hostname;
-          } catch {
-            /* keep empty */
-          }
-          const property = resolveGscProperty(crawlHost);
+          const property = gscProperty;
           if (property) {
             setDetail(`Pulling Search Console data for ${property} (last 28 days)…`);
             try {
@@ -393,6 +398,39 @@ export default function Home() {
         state.issues = issues.sort(
           (a, b) => b.impactScore - a.impactScore || severityRank(a.severity) - severityRank(b.severity)
         );
+
+        // 4b — error sources: for every confirmed broken URL, answer "where is
+        // this coming from?" — crawl link graph first (free, offline), then the
+        // GSC URL Inspection API (sitemaps + referring pages Google knows).
+        try {
+          state.issues = attachCrawlInlinkSources(state.issues, edges ?? inlinkEdgesRef.current);
+        } catch {
+          /* best effort — sources are enrichment, never a blocker */
+        }
+        if (gscProperty) {
+          try {
+            setDetail("Tracing error sources via GSC URL Inspection (sitemaps + referring pages)…");
+            setProgress(0);
+            const traced = await attachGscSources(state.issues, gscProperty, GSC_INSPECT_CAP, (done, total) => {
+              setProgress(total === 0 ? 1 : done / total);
+              setDetail(
+                `GSC URL Inspection · ${done}/${total} broken URLs traced (capped at ${GSC_INSPECT_CAP}/audit to protect the 2,000/day quota)`
+              );
+            });
+            state.issues = traced.issues;
+            if (traced.inspected > 0) {
+              note(
+                `Error sources: inspected ${traced.inspected} confirmed error URL(s) via GSC URL Inspection — ` +
+                  `${traced.withSources} have known sitemaps/referring pages` +
+                  (traced.failures > 0 ? `, ${traced.failures} inspection(s) unavailable` : "") +
+                  `.`
+              );
+            }
+          } catch (e) {
+            note(`GSC error-source tracing skipped: ${e instanceof Error ? e.message : "request failed"}.`);
+          }
+          setProgress(-1);
+        }
 
         // 5 — modules (each fails independently)
         setStage("modules");

@@ -1,4 +1,5 @@
 import { CrawlRow, Issue, Owner, Severity } from "./schema";
+import { isConcatenatedUrl, splitConcatenatedUrls } from "./url-utils";
 
 interface RuleDef {
   id: string;
@@ -22,18 +23,41 @@ const norm = (u: string) => u.replace(/\/$/, "").toLowerCase();
 
 export const RULES: RuleDef[] = [
   {
+    // Must run instead of the plain 4xx/5xx rules for these addresses, or the
+    // report shows one giant unreadable URL blob under "4xx client error".
+    id: "malformed-concatenated-url",
+    label: "Malformed URL — multiple URLs concatenated (broken link markup)",
+    severity: "Critical",
+    owner: "Dev",
+    test: (r) => {
+      const parts = splitConcatenatedUrls(r.url);
+      if (parts.length < 2) return null;
+      const shown = parts.slice(0, 10);
+      return (
+        `This single crawled address contains ${parts.length} URLs mashed together (HTTP ${r.statusCode}, ${r.inlinks} inlinks) — ` +
+        `almost always a broken <a href> in page markup (missing quote or template bug) that concatenated the URLs. ` +
+        `Constituent URLs:\n` +
+        shown.map((p) => `  • ${p}`).join("\n") +
+        (parts.length > shown.length ? `\n  …and ${parts.length - shown.length} more` : "")
+      );
+    },
+  },
+  {
     id: "http-4xx",
     label: "4xx client error",
     severity: "Critical",
     owner: "Dev",
-    test: (r) => (r.statusCode >= 400 && r.statusCode < 500 ? `HTTP ${r.statusCode}, ${r.inlinks} internal inlinks` : null),
+    test: (r) =>
+      r.statusCode >= 400 && r.statusCode < 500 && !isConcatenatedUrl(r.url)
+        ? `HTTP ${r.statusCode}, ${r.inlinks} internal inlinks`
+        : null,
   },
   {
     id: "http-5xx",
     label: "5xx server error",
     severity: "Critical",
     owner: "Dev",
-    test: (r) => (r.statusCode >= 500 ? `HTTP ${r.statusCode}` : null),
+    test: (r) => (r.statusCode >= 500 && !isConcatenatedUrl(r.url) ? `HTTP ${r.statusCode}` : null),
   },
   {
     id: "redirect-302",

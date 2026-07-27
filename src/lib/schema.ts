@@ -65,6 +65,14 @@ export interface Issue {
   fixStatus: FixStatus;
   gscClicks?: number;
   gscImpressions?: number;
+  /** Error source — sitemaps GSC knows this URL from (URL Inspection API). */
+  sourceSitemaps?: string[];
+  /** Error source — referring pages GSC knows for this URL (URL Inspection API). */
+  sourceReferringPages?: string[];
+  /** Error source — internal pages linking here, from the crawl link graph (All Inlinks / project DB). */
+  sourceInternalInlinks?: string[];
+  /** GSC coverage state for the URL, e.g. "URL is unknown to Google" / "Crawled - currently not indexed". */
+  gscCoverageState?: string;
 }
 
 export interface HeaderFinding {

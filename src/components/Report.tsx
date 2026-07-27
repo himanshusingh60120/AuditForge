@@ -20,6 +20,7 @@ import {
 import { checkRobots, parseRobotsTxt } from "@/lib/robots";
 import { downloadText, exportAuditJson, exportXlsx } from "@/lib/exports";
 import { buildStandaloneReport } from "@/lib/report-html";
+import { splitConcatenatedUrls } from "@/lib/url-utils";
 
 export interface PsiResult {
   url: string;
@@ -106,6 +107,12 @@ function IssueTable({
           {shown.map((i) => {
             const a = analyses.get(i.ruleId);
             const expanded = open === i.id;
+            const urlParts = splitConcatenatedUrls(i.url);
+            const hasSources =
+              (i.sourceSitemaps?.length ?? 0) > 0 ||
+              (i.sourceReferringPages?.length ?? 0) > 0 ||
+              (i.sourceInternalInlinks?.length ?? 0) > 0 ||
+              Boolean(i.gscCoverageState);
             return (
               <Fragment key={i.id}>
                 <tr
@@ -118,7 +125,11 @@ function IssueTable({
                   </td>
                   <td className="max-w-md py-2 pr-3">
                     <div className="text-slate-200">{i.ruleLabel}</div>
-                    <div className="break-all font-mono text-xs text-steel">{i.url}</div>
+                    <div className="break-all font-mono text-xs text-steel">
+                      {urlParts.length > 1
+                        ? `${urlParts[0]}  ⚠ +${urlParts.length - 1} more URLs concatenated into this one crawled address — expand for the full list`
+                        : i.url}
+                    </div>
                   </td>
                   <td className="py-2 pr-3">
                     <span className={`chip ${verColor[i.verification]}`}>{i.verification}</span>
@@ -147,10 +158,41 @@ function IssueTable({
                 {expanded && (
                   <tr className="border-b border-edge/50 bg-black/20">
                     <td colSpan={readOnly ? 5 : 6} className="space-y-2 px-3 py-3">
+                      {urlParts.length > 1 && (
+                        <div>
+                          <span className="font-mono text-[10px] uppercase tracking-widest text-steel">
+                            full crawled address (malformed — {urlParts.length} URLs in one)
+                          </span>
+                          <code className="evidence mt-1">{i.url}</code>
+                        </div>
+                      )}
                       <div>
                         <span className="font-mono text-[10px] uppercase tracking-widest text-steel">crawl evidence</span>
                         <code className="evidence mt-1">{i.evidence}</code>
                       </div>
+                      {hasSources && (
+                        <div>
+                          <span className="font-mono text-[10px] uppercase tracking-widest text-steel">
+                            error source · where this url is referenced
+                          </span>
+                          <code className="evidence mt-1">
+                            {[
+                              i.gscCoverageState ? `GSC indexing state: ${i.gscCoverageState}` : "",
+                              i.sourceSitemaps?.length
+                                ? `Sitemaps (GSC):\n${i.sourceSitemaps.map((s) => `  • ${s}`).join("\n")}`
+                                : "",
+                              i.sourceReferringPages?.length
+                                ? `Referring pages (GSC):\n${i.sourceReferringPages.map((s) => `  • ${s}`).join("\n")}`
+                                : "",
+                              i.sourceInternalInlinks?.length
+                                ? `Internal pages linking here (crawl / live source):\n${i.sourceInternalInlinks.map((s) => `  • ${s}`).join("\n")}`
+                                : "",
+                            ]
+                              .filter(Boolean)
+                              .join("\n")}
+                          </code>
+                        </div>
+                      )}
                       {i.liveEvidence && (
                         <div>
                           <span className="font-mono text-[10px] uppercase tracking-widest text-steel">live source evidence</span>

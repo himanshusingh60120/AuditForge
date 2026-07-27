@@ -1,134 +1,112 @@
-"use client";
-import { InlinkEdge } from "./parse";
-import { Issue } from "./schema";
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { GSC_COOKIE, getAccessToken, googlePost, gscConfigured } from "@/lib/gsc-server";
+
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 /**
- * Error-source tracing: for every confirmed broken URL, answer "where is this
- * URL coming from?" using two independent signals —
- *   1. the crawl link graph (All Inlinks export / project DB edges): which
- *      internal pages link to it, with anchor text;
- *   2. the GSC URL Inspection API: which sitemaps Google found it in and
- *      which referring pages Google knows, plus its coverage state.
+ * GSC URL Inspection API — traces the *source* of an error URL:
+ * which sitemaps Google found it in and which pages refer to it, plus the
+ * coverage state ("URL is unknown to Google", "Crawled - currently not
+ * indexed", …). Works with the webmasters.readonly scope already requested
+ * at OAuth time, so no re-consent is needed.
+ *
+ * Google's quota is 2,000 inspections/day and 600/min per property — the
+ * client caps how many URLs it sends per audit; this route additionally
+ * paces calls sequentially with a small delay.
  */
 
-/** Rules whose findings are "a URL is broken" — the ones worth tracing. */
-export const ERROR_SOURCE_RULES = new Set([
-  "http-4xx",
-  "http-5xx",
-  "redirect-broken-target",
-  "link-jump-check",
-  "live-broken-link",
-  "malformed-concatenated-url",
-]);
+const BodySchema = z.object({
+  siteUrl: z.string().min(1),
+  urls: z.array(z.string().url()).min(1).max(10),
+});
 
-const norm = (u: string) => u.replace(/\/$/, "");
-const MAX_INLINK_SOURCES = 10;
-
-/** Attach crawl-graph sources (needs the All Inlinks export or DB edges). Pure, cheap, offline. */
-export function attachCrawlInlinkSources(issues: Issue[], edges: InlinkEdge[] | null | undefined): Issue[] {
-  if (!edges || edges.length === 0) return issues;
-  const wanted = new Set(
-    issues.filter((i) => ERROR_SOURCE_RULES.has(i.ruleId)).map((i) => norm(i.url))
-  );
-  if (wanted.size === 0) return issues;
-
-  const sourcesByTarget = new Map<string, string[]>();
-  for (const e of edges) {
-    const t = norm(e.target);
-    if (!wanted.has(t)) continue;
-    const list = sourcesByTarget.get(t) ?? [];
-    if (list.length < MAX_INLINK_SOURCES) {
-      const entry = e.anchor ? `${e.source} — anchor: "${e.anchor.slice(0, 60)}"` : e.source;
-      if (!list.includes(entry)) list.push(entry);
-    }
-    sourcesByTarget.set(t, list);
-  }
-  if (sourcesByTarget.size === 0) return issues;
-
-  return issues.map((i) => {
-    const s = sourcesByTarget.get(norm(i.url));
-    if (!s || s.length === 0) return i;
-    const merged = [...(i.sourceInternalInlinks ?? [])];
-    for (const entry of s) if (!merged.includes(entry)) merged.push(entry);
-    return { ...i, sourceInternalInlinks: merged };
-  });
-}
-
-interface GscInspectResult {
+interface InspectResult {
   url: string;
   sitemaps: string[];
   referringPages: string[];
   coverageState?: string;
   verdict?: string;
+  lastCrawlTime?: string;
   error?: string;
 }
 
-export interface GscSourceTrace {
-  issues: Issue[];
-  inspected: number;
-  withSources: number;
-  failures: number;
-}
+const INSPECT_ENDPOINT = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect";
+const PER_URL_DELAY_MS = 150;
 
-/**
- * Attach GSC URL Inspection sources to confirmed error issues.
- * Highest-impact URLs first, unique, capped — Google's inspection quota is
- * 2,000/day per property, and one audit must never eat it.
- */
-export async function attachGscSources(
-  issues: Issue[],
-  siteUrl: string,
-  cap: number,
-  onProgress: (done: number, total: number) => void
-): Promise<GscSourceTrace> {
-  const candidates = issues
-    .filter((i) => ERROR_SOURCE_RULES.has(i.ruleId) && i.verification === "CONFIRMED")
-    .sort((a, b) => b.impactScore - a.impactScore);
-
-  const urls: string[] = [];
-  const seen = new Set<string>();
-  for (const i of candidates) {
-    if (!seen.has(i.url)) {
-      seen.add(i.url);
-      urls.push(i.url);
-    }
-    if (urls.length >= cap) break;
+export async function POST(req: NextRequest) {
+  if (!gscConfigured()) {
+    return NextResponse.json({ error: "GSC not configured on this deployment." }, { status: 501 });
   }
-  if (urls.length === 0) return { issues, inspected: 0, withSources: 0, failures: 0 };
+  const auth = await getAccessToken(req);
+  if (!auth) return NextResponse.json({ error: "Not connected to Google Search Console." }, { status: 401 });
 
-  const resultByUrl = new Map<string, GscInspectResult>();
-  let failures = 0;
-  for (let b = 0; b < urls.length; b += 10) {
-    const batch = urls.slice(b, b + 10);
+  let body: z.infer<typeof BodySchema>;
+  try {
+    body = BodySchema.parse(await req.json());
+  } catch {
+    return NextResponse.json(
+      { error: "Provide { siteUrl, urls: string[] } with 1–10 valid URLs." },
+      { status: 400 }
+    );
+  }
+
+  const results: InspectResult[] = [];
+  for (let i = 0; i < body.urls.length; i++) {
+    const url = body.urls[i];
     try {
-      const res = await fetch("/api/gsc/inspect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ siteUrl, urls: batch }),
+      const res = await googlePost(auth.token, INSPECT_ENDPOINT, {
+        inspectionUrl: url,
+        siteUrl: body.siteUrl,
+        languageCode: "en-US",
       });
-      const data = (await res.json()) as { results?: GscInspectResult[]; error?: string };
-      if (!res.ok || !data.results) throw new Error(data.error ?? `Inspect batch failed (${res.status})`);
-      for (const r of data.results) {
-        if (r.error) failures++;
-        resultByUrl.set(norm(r.url), r);
+      if (res.status === 401) {
+        return NextResponse.json({ error: "Google session expired — reconnect Search Console." }, { status: 401 });
       }
-    } catch {
-      failures += batch.length;
+      if (res.status === 403) {
+        // Per-URL 403s happen when the URL sits outside the property — record and continue.
+        results.push({ url, sitemaps: [], referringPages: [], error: "No inspection access for this URL in the selected property." });
+      } else if (res.status === 429) {
+        results.push({ url, sitemaps: [], referringPages: [], error: "GSC inspection quota hit (600/min or 2,000/day) — remaining URLs skipped." });
+        // Quota exhausted: fail the rest fast instead of hammering the API.
+        for (const rest of body.urls.slice(i + 1)) {
+          results.push({ url: rest, sitemaps: [], referringPages: [], error: "Skipped after quota hit." });
+        }
+        break;
+      } else if (!res.ok) {
+        results.push({ url, sitemaps: [], referringPages: [], error: `Inspection API ${res.status}: ${(await res.text()).slice(0, 160)}` });
+      } else {
+        const data = (await res.json()) as {
+          inspectionResult?: {
+            indexStatusResult?: {
+              verdict?: string;
+              coverageState?: string;
+              sitemap?: string[];
+              referringUrls?: string[];
+              lastCrawlTime?: string;
+            };
+          };
+        };
+        const idx = data.inspectionResult?.indexStatusResult;
+        results.push({
+          url,
+          sitemaps: idx?.sitemap ?? [],
+          referringPages: idx?.referringUrls ?? [],
+          coverageState: idx?.coverageState,
+          verdict: idx?.verdict,
+          lastCrawlTime: idx?.lastCrawlTime,
+        });
+      }
+    } catch (e) {
+      results.push({ url, sitemaps: [], referringPages: [], error: e instanceof Error ? e.message : "Inspection failed" });
     }
-    onProgress(Math.min(b + 10, urls.length), urls.length);
+    if (i < body.urls.length - 1) await new Promise((r) => setTimeout(r, PER_URL_DELAY_MS));
   }
 
-  let withSources = 0;
-  const out = issues.map((i) => {
-    const r = resultByUrl.get(norm(i.url));
-    if (!r || r.error) return i;
-    if (r.sitemaps.length > 0 || r.referringPages.length > 0) withSources++;
-    return {
-      ...i,
-      sourceSitemaps: r.sitemaps.length > 0 ? r.sitemaps : i.sourceSitemaps,
-      sourceReferringPages: r.referringPages.length > 0 ? r.referringPages : i.sourceReferringPages,
-      gscCoverageState: r.coverageState ?? i.gscCoverageState,
-    };
-  });
-  return { issues: out, inspected: urls.length, withSources, failures };
+  const out = NextResponse.json({ results });
+  if (auth.resealed) {
+    out.cookies.set(GSC_COOKIE, auth.resealed, { httpOnly: true, sameSite: "lax", maxAge: 60 * 60 * 24 * 180, path: "/" });
+  }
+  return out;
 }

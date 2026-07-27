@@ -219,7 +219,10 @@ export function issuesAsJiraCsv(issues: Issue[]): string {
         esc(
           `URL: ${i.url}\nIssue: ${i.ruleLabel}\nEvidence (crawl): ${i.evidence}\nEvidence (live, verified ${i.verifiedAt ?? ""}): ${
             i.liveEvidence ?? ""
-          }\nImpact score: ${i.impactScore}`
+          }\nImpact score: ${i.impactScore}` +
+            (i.sourceSitemaps?.length ? `\nSource sitemaps (GSC): ${i.sourceSitemaps.join(", ")}` : "") +
+            (i.sourceReferringPages?.length ? `\nSource referring pages (GSC): ${i.sourceReferringPages.join(", ")}` : "") +
+            (i.sourceInternalInlinks?.length ? `\nInternal pages linking here: ${i.sourceInternalInlinks.join(", ")}` : "")
         ),
         priority[i.severity],
         esc(`seo,auditforge,team-${i.owner.toLowerCase()},${i.ruleId}`),

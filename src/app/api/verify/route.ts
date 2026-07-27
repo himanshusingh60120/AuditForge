@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { parse as parseHtml } from "node-html-parser";
 import { checkRobots, parseRobotsTxt, RobotsGroup } from "@/lib/robots";
 import { HeaderFinding, VerifyRequestSchema, VerifyResultItem } from "@/lib/schema";
+import { isConcatenatedUrl } from "@/lib/url-utils";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -122,6 +123,10 @@ async function fetchLive(url: string): Promise<LiveState> {
           const abs = new URL(href, current);
           abs.hash = "";
           const str = abs.toString();
+          // Concatenated blobs (broken href markup) are reported by their own
+          // detection rule — chasing them via link jump would re-create the
+          // giant-URL findings this pipeline is meant to keep readable.
+          if (isConcatenatedUrl(str)) continue;
           if (abs.origin === pageOrigin && !seen.has(str)) {
             seen.add(str);
             internalLinks.push(str);
@@ -296,6 +301,12 @@ function classify(
       const words = text.split(/\s+/).filter(Boolean).length;
       return words < 150 ? confirmed(`Live body ≈ ${words} words`) : resolved(`Live body ≈ ${words} words`);
     }
+    case "malformed-concatenated-url":
+      // The defect is the address itself, not the response — a 200 (soft
+      // resolve) doesn't fix the broken href that produced this blob.
+      return confirmed(
+        `Live fetch of the concatenated address: HTTP ${s}. The address is malformed regardless of the response — locate the page(s) emitting this broken href (see error sources) and fix the markup.`
+      );
     case "link-jump-check":
       return s >= 400
         ? confirmed(`Live fetch: HTTP ${s} — this URL was discovered in another page's live source, not in the crawl`)

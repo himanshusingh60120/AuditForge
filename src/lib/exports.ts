@@ -26,6 +26,10 @@ function issueRows(issues: Issue[]): Record<string, string | number>[] {
     "Fix Status": i.fixStatus,
     "GSC Clicks": i.gscClicks ?? "",
     "GSC Impressions": i.gscImpressions ?? "",
+    "GSC Coverage": i.gscCoverageState ?? "",
+    "Source: Sitemaps (GSC)": (i.sourceSitemaps ?? []).join("\n"),
+    "Source: Referring Pages (GSC)": (i.sourceReferringPages ?? []).join("\n"),
+    "Source: Internal Inlinks (crawl)": (i.sourceInternalInlinks ?? []).join("\n"),
   }));
 }
 
